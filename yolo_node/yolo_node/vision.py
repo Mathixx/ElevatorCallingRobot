@@ -11,16 +11,15 @@ from yolo_node.frame_boxes import frame_boxes
 
 class YOLO_Node(Node):
 
-    def __init__(self):
+    def __init__(self, parent_path, model_path, video_path):
         super().__init__('yolo_node')
 
         self.publisher_ = self.create_publisher(Image, 'image', 10)
         self.bridge = CvBridge()
 
-        video_path = "/home/test/ros2_ws/src/yolo_node/yolo_node/DATA_video_streams/video_2.mp4"
-        self.cap = cv2.VideoCapture(video_path)
+        self.cap = cv2.VideoCapture(os.path.join(parent_path, video_path))
 
-        self.model = YOLO('/home/test/ros2_ws/src/yolo_node/yolo_node/two_cls_focal.torchscript')
+        self.model = YOLO(os.path.join(parent_path, model_path))
 
         self.current_img = None
         self.frame_idx = 0
@@ -94,7 +93,11 @@ def main(args=None):
 
     rclpy.init(args=args)
 
-    node = YOLO_Node()
+    parent_path = 'home/test/ros2_ws/src/yolo_node/yolo_node/'
+    model_path = 'MODELS/two_cls_bcew.torchscript'
+    video_path = 'DATA_video_streams/video_3.mp4'
+
+    node = YOLO_Node(parent_path, model_path, video_path)
 
     try:
         rclpy.spin(node)
