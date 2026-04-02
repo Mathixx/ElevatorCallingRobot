@@ -11,8 +11,10 @@ from yolo_node.frame_boxes import frame_boxes
 
 class YOLO_Node(Node):
 
-    def __init__(self, parent_path, model_path, video_path):
+    def __init__(self, parent_path, model_path, video_path, params=[0.001, 0.7]):
         super().__init__('yolo_node')
+
+        self.params = params
 
         self.publisher_ = self.create_publisher(Image, 'image', 10)
         self.bridge = CvBridge()
@@ -44,9 +46,8 @@ class YOLO_Node(Node):
 
         frame = cv2.resize(frame, (640, 640))
         self.current_img = frame.copy()
-        # print(self.current_img.shape, self.current_img.dtype)
 
-        results = self.model(frame, conf=0.25, iou=0.6)[0]
+        results = self.model(frame, conf=self.params[0], iou=self.params[1])[0]
 
         bboxes, sobel_maps, centroids, classes = frame_boxes(results, self.current_img)
         print(sum(classes))
@@ -93,11 +94,13 @@ def main(args=None):
 
     rclpy.init(args=args)
 
-    parent_path = 'home/test/ros2_ws/src/yolo_node/yolo_node/'
-    model_path = 'MODELS/two_cls_bcew.torchscript'
+    parent_path = '/home/test/ros2_ws/src/yolo_node/yolo_node/'
+    model_path = 'MODELS/SOTA_two_cls_bcew_penalty.torchscript'
     video_path = 'DATA_video_streams/video_3.mp4'
+    params = [0.25, 0.4]
+    print(params)
 
-    node = YOLO_Node(parent_path, model_path, video_path)
+    node = YOLO_Node(parent_path, model_path, video_path, params)
 
     try:
         rclpy.spin(node)
