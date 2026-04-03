@@ -1,21 +1,30 @@
 import os
+from copy import deepcopy
+
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import Image
+from std_msgs.msg import Header
 from cv_bridge import CvBridge
 import cv2
 import numpy as np
 from ultralytics import YOLO
+from yolo_msgs.msg import DetectedButtons
+
+from yolo_node.detection_msg import build_detected_buttons
 from yolo_node.frame_boxes import frame_boxes
 
 
 def _subscription_qos(use_reliable: bool):
-    """QoS must match the camera publisher or the subscriber receives nothing.
+    """
+    Return a QoS profile for the camera image subscription.
 
+    Must match the camera publisher or the subscriber receives nothing.
     Stretch tutorials use create_subscription(..., 10) → RELIABLE, depth 10.
-    Stock Intel realsense2_camera often uses sensor/BEST_EFFORT — set use_reliable_qos:=false if needed.
+    Stock Intel realsense2_camera often uses sensor/BEST_EFFORT — set
+    use_reliable_qos:=false if needed.
     """
     if use_reliable:
         return QoSProfile(
@@ -28,21 +37,24 @@ def _subscription_qos(use_reliable: bool):
 
 class YOLO_Node(Node):
 
-<<<<<<< HEAD
     def __init__(self, parent_path, model_path, video_path=None):
         super().__init__('yolo_node')
 
         self.declare_parameter('image_topic', '/camera/color/image_raw')
-        # Default True: matches Stretch capture_image / edge_detection tutorials (depth 10, RELIABLE).
         self.declare_parameter('use_reliable_qos', True)
-=======
-    def __init__(self, parent_path, model_path, video_path, params=[0.001, 0.7]):
-        super().__init__('yolo_node')
-
-        self.params = params
->>>>>>> e9247cc3a4e062decf92db96d06b3e3e3f1fa645
+        self.declare_parameter('conf_threshold', 0.25)
+        self.declare_parameter('iou_threshold', 0.4)
+        # Default avoids /detected_buttons if another node still publishes vision_msgs there.
+        self.declare_parameter('detections_topic', '/yolo/detected_buttons')
+        self.declare_parameter('show_display', True)
 
         self.publisher_ = self.create_publisher(Image, 'image', 10)
+        det_topic = self.get_parameter('detections_topic').get_parameter_value().string_value
+        self._detections_pub = self.create_publisher(DetectedButtons, det_topic, 10)
+        self.get_logger().info(
+            f'Publishing yolo_msgs/DetectedButtons on "{det_topic}" '
+            '(remap or set detections_topic to change; use one publisher per topic name).'
+        )
         self.bridge = CvBridge()
 
         self.model = YOLO(os.path.join(parent_path, model_path))
@@ -51,16 +63,25 @@ class YOLO_Node(Node):
         self.frame_idx = 0
 
         self.window_name = 'YOLO'
-        cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
+        self._show_display = self.get_parameter('show_display').get_parameter_value().bool_value
+        if self._show_display:
+            cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
 
         self.use_file = video_path is not None
         self.latest_frame = None
+        self._latest_image_header = Header()
         self._infer_busy = False
         self._got_camera_frame = False
 
         if self.use_file:
             self.cap = cv2.VideoCapture(os.path.join(parent_path, video_path))
-            self.gui_timer = self.create_timer(0.01, self.gui_callback)
+            if self._show_display:
+                self.gui_timer = self.create_timer(0.01, self.gui_callback)
+            else:
+                fps = float(self.cap.get(cv2.CAP_PROP_FPS))
+                if fps <= 1.0 or fps > 120.0:
+                    fps = 30.0
+                self._playback_timer = self.create_timer(1.0 / fps, self._file_playback_tick)
             self.process_frame_from_file()
         else:
             self.cap = None
@@ -81,9 +102,9 @@ class YOLO_Node(Node):
                 self.image_callback,
                 qos,
             )
-            # Fast path: only buffer frames; inference runs on a timer so the GUI keeps updating.
             self.inference_timer = self.create_timer(1.0 / 30.0, self.inference_tick)
-            self.gui_timer = self.create_timer(0.01, self.gui_callback)
+            if self._show_display:
+                self.gui_timer = self.create_timer(0.01, self.gui_callback)
             self._diag_timer = self.create_timer(5.0, self._diagnostics_tick)
 
         self._placeholder = self._make_placeholder()
@@ -106,6 +127,10 @@ class YOLO_Node(Node):
         )
         return img
 
+    def _file_playback_tick(self):
+        self.frame_idx += 1
+        self.process_frame_from_file()
+
     def _diagnostics_tick(self):
         if self._got_camera_frame:
             self._diag_timer.cancel()
@@ -126,6 +151,7 @@ class YOLO_Node(Node):
             self.get_logger().error(f'cv_bridge: {e}')
             return
         self.latest_frame = frame
+        self._latest_image_header = msg.header
         if not self._got_camera_frame:
             self._got_camera_frame = True
             self.get_logger().info('First camera frame received.')
@@ -136,7 +162,7 @@ class YOLO_Node(Node):
         self._infer_busy = True
         try:
             frame = self.latest_frame.copy()
-            self.run_inference(frame)
+            self.run_inference(frame, self._latest_image_header)
         finally:
             self._infer_busy = False
 
@@ -148,28 +174,47 @@ class YOLO_Node(Node):
             self.get_logger().info('End of video or invalid frame')
             return
 
-        self.run_inference(frame)
+        hdr = Header()
+        hdr.stamp = self.get_clock().now().to_msg()
+        self.run_inference(frame, hdr)
 
-    def run_inference(self, frame):
+    def run_inference(self, frame, image_header=None):
         frame = cv2.resize(frame, (640, 640))
+        inference_w = float(frame.shape[1])
         self.current_img = frame.copy()
 
-        results = self.model(frame, conf=self.params[0], iou=self.params[1])[0]
+        conf = self.get_parameter('conf_threshold').get_parameter_value().double_value
+        iou = self.get_parameter('iou_threshold').get_parameter_value().double_value
+        results = self.model(frame, conf=conf, iou=iou)[0]
 
         bboxes, sobel_maps, centroids, classes = frame_boxes(results, self.current_img)
-        print(sum(classes))
+        boxes_list = list(results.boxes)
+
+        if image_header is None:
+            hdr = Header()
+            hdr.stamp = self.get_clock().now().to_msg()
+        else:
+            hdr = deepcopy(image_header)
+
+        # Bbox centers, offset_from_center_x, and sizes use the resized inference frame.
+        self._detections_pub.publish(
+            build_detected_buttons(hdr, bboxes, centroids, boxes_list, inference_w),
+        )
 
         for box, sobel, cen, cla in zip(bboxes, sobel_maps, centroids, classes):
             x1, y1, x2, y2 = box.astype(int)
 
             self.current_img[y1:y2, x1:x2] = sobel
-            cv2.rectangle(self.current_img, (x1, y1), (x2, y2), (0, 255 if cla == 0 else 0, 255 if cla == 1 else 0), 2)
+            bgr = (0, 255 if cla == 0 else 0, 255 if cla == 1 else 0)
+            cv2.rectangle(self.current_img, (x1, y1), (x2, y2), bgr, 2)
             cv2.circle(self.current_img, (int(cen[0]), int(cen[1])), 5, (255, 0, 0), -1)
 
         msg = self.bridge.cv2_to_imgmsg(self.current_img, encoding='bgr8')
         self.publisher_.publish(msg)
 
     def gui_callback(self):
+        if not self._show_display:
+            return
         if self.use_file:
             show = self.current_img
         else:
@@ -196,7 +241,8 @@ class YOLO_Node(Node):
     def shutdown(self):
         if self.cap is not None:
             self.cap.release()
-        cv2.destroyAllWindows()
+        if self._show_display:
+            cv2.destroyAllWindows()
         rclpy.shutdown()
 
 
@@ -204,19 +250,11 @@ def main(args=None):
 
     rclpy.init(args=args)
 
-<<<<<<< HEAD
     parent_path = '/home/stretch-re1/Desktop/ElevatorCallingRobot/yolo_node/yolo_node/'
     model_path = 'MODELS/two_cls_bcew.torchscript'
     video_path = None
-=======
-    parent_path = '/home/test/ros2_ws/src/yolo_node/yolo_node/'
-    model_path = 'MODELS/SOTA_two_cls_bcew_penalty.torchscript'
-    video_path = 'DATA_video_streams/video_3.mp4'
-    params = [0.25, 0.4]
-    print(params)
->>>>>>> e9247cc3a4e062decf92db96d06b3e3e3f1fa645
 
-    node = YOLO_Node(parent_path, model_path, video_path, params)
+    node = YOLO_Node(parent_path, model_path, video_path)
 
     try:
         rclpy.spin(node)

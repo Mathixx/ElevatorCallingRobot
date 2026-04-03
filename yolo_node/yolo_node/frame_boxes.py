@@ -8,7 +8,7 @@ def frame_boxes(preds, img):
     bboxes, sobel_maps, centroids, classes = [], [], [], []
 
     for box in preds.boxes:
-        classes.append(box.cls)
+        classes.append(int(box.cls.item()))
 
         box_coords = box.xyxy[0].tolist()
         box_coords = np.floor(box_coords).astype(int)
