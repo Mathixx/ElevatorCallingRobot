@@ -7,7 +7,6 @@ ROS 2 workspace: **yolo_msgs** (custom messages) + **yolo_node** (YOLO inference
 From this directory (the colcon workspace root):
 
 ```bash
-source /opt/ros/$ROS_DISTRO/setup.bash   # e.g. humble
 colcon build --packages-select yolo_msgs yolo_node
 ```
 
