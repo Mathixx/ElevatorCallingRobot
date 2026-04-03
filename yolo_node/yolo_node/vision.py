@@ -28,12 +28,19 @@ def _subscription_qos(use_reliable: bool):
 
 class YOLO_Node(Node):
 
+<<<<<<< HEAD
     def __init__(self, parent_path, model_path, video_path=None):
         super().__init__('yolo_node')
 
         self.declare_parameter('image_topic', '/camera/color/image_raw')
         # Default True: matches Stretch capture_image / edge_detection tutorials (depth 10, RELIABLE).
         self.declare_parameter('use_reliable_qos', True)
+=======
+    def __init__(self, parent_path, model_path, video_path, params=[0.001, 0.7]):
+        super().__init__('yolo_node')
+
+        self.params = params
+>>>>>>> e9247cc3a4e062decf92db96d06b3e3e3f1fa645
 
         self.publisher_ = self.create_publisher(Image, 'image', 10)
         self.bridge = CvBridge()
@@ -147,7 +154,7 @@ class YOLO_Node(Node):
         frame = cv2.resize(frame, (640, 640))
         self.current_img = frame.copy()
 
-        results = self.model(frame, conf=0.25, iou=0.6)[0]
+        results = self.model(frame, conf=self.params[0], iou=self.params[1])[0]
 
         bboxes, sobel_maps, centroids, classes = frame_boxes(results, self.current_img)
         print(sum(classes))
@@ -197,11 +204,19 @@ def main(args=None):
 
     rclpy.init(args=args)
 
+<<<<<<< HEAD
     parent_path = '/home/stretch-re1/Desktop/ElevatorCallingRobot/yolo_node/yolo_node/'
     model_path = 'MODELS/two_cls_bcew.torchscript'
     video_path = None
+=======
+    parent_path = '/home/test/ros2_ws/src/yolo_node/yolo_node/'
+    model_path = 'MODELS/SOTA_two_cls_bcew_penalty.torchscript'
+    video_path = 'DATA_video_streams/video_3.mp4'
+    params = [0.25, 0.4]
+    print(params)
+>>>>>>> e9247cc3a4e062decf92db96d06b3e3e3f1fa645
 
-    node = YOLO_Node(parent_path, model_path, video_path)
+    node = YOLO_Node(parent_path, model_path, video_path, params)
 
     try:
         rclpy.spin(node)
