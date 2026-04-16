@@ -1,0 +1,10 @@
+# Elevator goal and optional initial pose (map frame). Edit and run: python3 elevator_task_master_node.py
+
+elevator_x: 3.997823715209961
+elevator_y: 4.1204071044921875
+elevator_yaw: 2.8568
+
+use_initial_pose: true
+initial_pose_x: 2.0282654762268066
+initial_pose_y: 4.753573417663574
+initial_pose_yaw: 2.7335
